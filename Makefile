@@ -5,6 +5,8 @@ all:
 	rm -rf erl_cra* rebar3_crashreport;
 	rm -rf *~ */*~ */*/*~ */*/*/*~;
 	#INFO: Deleting euinit test applications dirs
+	rm -rf *_container;
+	rm -rf Mnesia.*;
 	rm -rf logs;
 	rm -rf host_specs;
 	rm -rf test_ebin;
@@ -34,6 +36,9 @@ clean:
 	rm -rf erl_cra* rebar3_crashreport;
 	rm -rf *~ */*~ */*/*~ */*/*/*~;
 	#INFO: Deleting euinit test applications dirs
+	rm -rf *_container;
+	rm -rf Mnesia.*;
+	rm -rf logs;
 	rm -rf test_ebin;
 	#INFO: Deleting tilde files and beam
 	rm -rf src/*.beam;
@@ -54,6 +59,9 @@ eunit:
 	rm -rf erl_cra* rebar3_crashreport;
 	rm -rf *~ */*~ */*/*~ */*/*/*~;
 	#INFO: Deleting euinit test applications dirs
+	rm -rf *_container;
+	rm -rf Mnesia.*;
+	rm -rf logs;
 	rm -rf test_ebin;
 	#INFO: Deleting tilde files and beams
 	rm -rf src/*.beam;
@@ -81,7 +89,7 @@ eunit:
 	erl -pa test_ebin\
 	 -pa _build/default/lib/log/ebin\
 	 -pa _build/default/lib/rd/ebin\
-	 -pa _build/default/lib/git_handler/ebin\
+	 -pa _build/default/lib/common/ebin\
 	 -pa _build/default/lib/host_server/ebin\
 	 -sname test_host_server\
 	 -run $(m) start\

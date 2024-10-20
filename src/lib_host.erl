@@ -13,7 +13,15 @@
  
 %% API
 -export([
-	 get_host_nodes/1,
+	 all_filenames/1,
+	 get_host_nodes/1
+
+	]).
+
+
+
+-export([
+
 	 get_application_config/1
 	]).
 
@@ -37,23 +45,55 @@
 %% 
 %% @end
 %%--------------------------------------------------------------------
-get_application_config(RepoDir)->
+all_filenames(SpecsDir)->
+    {ok,Files}=file:list_dir(SpecsDir),
+    SpecFiles=[File||File<-Files,
+		     ?SpecExt=:=filename:extension(File)],
+    {ok,SpecFiles}.
+    
+%%--------------------------------------------------------------------
+%% @doc
+%% 
+%% @end
+%%--------------------------------------------------------------------
+get_host_nodes(SpecsDir)->
+    Result=case all_filenames(SpecsDir) of
+	       {ok,SpecFiles}->
+		   get_host_nodes(SpecFiles,SpecsDir,[]);
+	       Error ->
+		    Error
+	   end,   
+    Result.
+	
+get_host_nodes([],_,Acc)->
+    Acc;
+get_host_nodes([File|T],SpecsDir,Acc)->
+    {ok,[Info]}=file:consult(filename:join(SpecsDir,File)),
+    HostNode=maps:get(host_node,Info),
+    get_host_nodes(T,SpecsDir,[HostNode|Acc]).
+
+%%--------------------------------------------------------------------
+%% @doc
+%% 
+%% @end
+%%--------------------------------------------------------------------
+get_application_config(SpecsDir)->
     {ok,MyHostName}=net:gethostname(),
-    Result=case git_handler:all_filenames(RepoDir) of
-	       {ok,AllFileNames}->
-		   get_application_config(AllFileNames,MyHostName,RepoDir,[],false);
+    Result=case  all_filenames(SpecsDir) of
+	       {ok,SpecFiles}->
+		   get_application_config(SpecFiles,MyHostName,SpecsDir,[],false);
 	       Error ->
 		    Error
 	   end,   
     Result.
 	
 
-get_application_config([],MyHostName,RepoDir,_,false)->
-    {error,["Specification for host doesnt exist in the reps ",MyHostName,RepoDir]};
+get_application_config([],MyHostName,SpecsDir,_,false)->
+    {error,["Specification for host doesnt exist in the reps ",MyHostName,SpecsDir]};
 get_application_config(_,_,_,ApplicationConfig,true)->
     {ok,ApplicationConfig};
-get_application_config([FileName|T],MyHostName,RepoDir,ApplicationConfig,false)->
-    {ok,[Info]}=git_handler:read_file(RepoDir,FileName), 
+get_application_config([File|T],MyHostName,SpecsDir,ApplicationConfig,false)->
+    {ok,[Info]}=file:consult(filename:join(SpecsDir,File)),
     HostName=maps:get(hostname,Info),
     if 
 	HostName=:=MyHostName->
@@ -63,28 +103,9 @@ get_application_config([FileName|T],MyHostName,RepoDir,ApplicationConfig,false)-
 	    NewApplicationConfig=ApplicationConfig,
 	    Found=false
     end,
-    get_application_config(T,MyHostName,RepoDir,NewApplicationConfig,Found).
+    get_application_config(T,MyHostName,SpecsDir,NewApplicationConfig,Found).
 
-%%--------------------------------------------------------------------
-%% @doc
-%% 
-%% @end
-%%--------------------------------------------------------------------
-get_host_nodes(RepoDir)->
-    Result=case git_handler:all_filenames(RepoDir) of
-	       {ok,AllFileNames}->
-		   get_host_nodes(AllFileNames,RepoDir,[]);
-	       Error ->
-		    Error
-	   end,   
-    Result.
-	
-get_host_nodes([],_,Acc)->
-    Acc;
-get_host_nodes([FileName|T],RepoDir,Acc)->
-    {ok,[Info]}=git_handler:read_file(RepoDir,FileName), 
-    HostNode=maps:get(host_node,Info),
-    get_host_nodes(T,RepoDir,[HostNode|Acc]).
+
 %%--------------------------------------------------------------------
 %% @doc
 %% 

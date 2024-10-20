@@ -34,8 +34,7 @@
 
 -export([
 	 get_host_nodes/0,
-	 get_application_config/0,
-	 check_update_repo/0
+	 get_application_config/0
 	 
 	 
 	]).
@@ -67,28 +66,14 @@
 -define(SERVER, ?MODULE).
 		     
 -record(state, {
-		repo_dir,
-		git_path
+		specs_dir
 	        
 	       }).
 
 %%%===================================================================
 %%% API
 %%%===================================================================
-%%--------------------------------------------------------------------
-%% @doc
-%% This is the recurring function that checks if the repo needs to be 
-%% updated. If the repo 
-%%     - doesnt exists -> a git clone
-%%     - exists but behind main branch -> pull
-%%     - sync with main branch -> no action
-%%
-%% @end
-%%--------------------------------------------------------------------
--spec check_update_repo() -> ok.
 
-check_update_repo() ->
-    gen_server:cast(?SERVER,{check_update_repo}).
 %%--------------------------------------------------------------------
 %% @doc
 %% Return all hostnodes in the cluster. This is used to connect to other 
@@ -204,12 +189,10 @@ stop()-> gen_server:stop(?SERVER).
 	  ignore.
 
 init([]) ->
-    
+    Self=self(),
+    spawn_link(fun()->repo_check_timeout_loop(Self) end),
     {ok, #state{
-	    repo_dir=?RepoDir,
-	    git_path=?RepoGit
-	  
-	    
+	  	      
 	   },0}.
 
 
@@ -233,9 +216,7 @@ init([]) ->
 %%++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 handle_call({get_host_nodes}, _From, State) ->
-    RepoDir=State#state.repo_dir,
-    
-    Result=try lib_host:get_host_nodes(RepoDir) of
+    Result=try lib_host:get_host_nodes(?SpecsDir) of
 	       {ok,R}->
 		    {ok,R};
 	       Error->
@@ -254,8 +235,7 @@ handle_call({get_host_nodes}, _From, State) ->
     {reply, Reply,State};
 
 handle_call({get_application_config}, _From, State) ->
-    RepoDir=State#state.repo_dir,
-    Result=try lib_host:get_application_config(RepoDir) of
+    Result=try lib_host:get_application_config(?SpecsDir) of
 	       {ok,R}->
 		    {ok,R};
 	       Error->
@@ -275,8 +255,7 @@ handle_call({get_application_config}, _From, State) ->
 
 
 handle_call({all_filenames}, _From, State) ->
-    RepoDir=State#state.repo_dir,
-    Result=try git_handler:all_filenames(RepoDir) of
+    Result=try lib_host:all_filenames(?SpecsDir) of
 	       {ok,R}->
 		    {ok,R};
 	       Error->
@@ -295,8 +274,8 @@ handle_call({all_filenames}, _From, State) ->
     {reply, Reply,State};
 
 handle_call({read_file,FileName}, _From, State) ->
-    RepoDir=State#state.repo_dir,
-    Result=try git_handler:read_file(RepoDir,FileName) of
+  
+    Result=try git_handler:read_file(?SpecsDir,FileName) of
 	       {ok,R}->
 		    {ok,R};
 	       Error->
@@ -315,9 +294,8 @@ handle_call({read_file,FileName}, _From, State) ->
 
 
 handle_call({update}, _From, State) ->
-    RepoDir=State#state.repo_dir,
-    GitPath=State#state.git_path,    
-    Reply=try lib_host:update(RepoDir,GitPath) of
+       
+    Reply=try lib_host:update(?SpecsDir,?RepoGit) of
 	      {ok,Result}->
 		  {ok,Result}
 	  catch
@@ -347,26 +325,6 @@ handle_call(UnMatchedSignal, From, State) ->
 %% Handling cast messages
 %% @end
 %%--------------------------------------------------------------------
-
-handle_cast({check_update_repo}, State) ->
-    RepoDir=State#state.repo_dir,
-    GitPath=State#state.git_path,    
-    try lib_host:update(RepoDir,GitPath) of
-	{ok,"Cloned the repo"}->
-	    ?LOG_NOTICE("Cloned the repo",[]);
-	{ok,"Pulled a new update of the repo"}->
-	    ?LOG_NOTICE("Pulled a new update of the repo",[]);
-	{ok,"Repo is up to date"}->
-	    ok
-    catch
-	Event:Reason:Stacktrace ->
-	    {Event,Reason,Stacktrace,?MODULE,?LINE}
-    end,
-    spawn(fun()->lib_host:timer_to_call_update(?Interval) end),
-    {noreply, State};
-
-
-
 handle_cast({stop}, State) ->
     
     {stop,normal,ok,State};
@@ -389,22 +347,42 @@ handle_cast(UnMatchedSignal, State) ->
 	  {stop, Reason :: normal | term(), NewState :: term()}.
 
 handle_info(timeout, State) ->
-
-    RepoDir=State#state.repo_dir,
-    GitPath=State#state.git_path,
-    try lib_host:init(RepoDir,GitPath) of
-	ok->
+    case lib_git:update_repo(?SpecsDir) of
+	{error,["Dir eexists ",_]}->
+	    ok=case lib_git:clone(?RepoGit) of
+		   ok->
+		       ?LOG_NOTICE("Repo dir didnt existed so a succesful cloned action is executed",[?SpecsDir]);
+		   {error,Reason}->
+		       ?LOG_WARNING("Failed during clone action ",[Reason])
+	       end;
+	{error,["Already updated ","application_specs"]}->
 	    ok;
 	{error,Reason}->
-	    ?LOG_WARNING("Init failed",[Reason]),
-	    {error,Reason}
-    catch
-	Event:Reason:Stacktrace ->
-	    ?LOG_WARNING("Init failed",[Event,Reason,Stacktrace]),
-	    {Event,Reason,Stacktrace,?MODULE,?LINE}
+	    ?LOG_WARNING("Failed to update ",[Reason]);
+	{ok,Info} ->
+	    ?LOG_NOTICE("Repo dir actions",[Info,?SpecsDir]),
+	    ok
     end,
-    spawn(fun()->lib_host:timer_to_call_update(?Interval) end),
     ?LOG_NOTICE("Server started ",[?MODULE]),
+    {noreply, State};
+
+handle_info({timeout,check_repo_update}, State) ->
+    case lib_git:update_repo(?SpecsDir) of
+	{error,["Dir eexists ",?SpecsDir]}->
+	    ok=case lib_git:clone(?RepoGit) of
+		   ok->
+		       ?LOG_NOTICE("Repo dir didnt existed so a succesful cloned action is executed",[?SpecsDir]);
+		   {error,Reason}->
+		       ?LOG_WARNING("Failed during clone action ",[Reason])
+	       end;
+	{error,["Already updated ","host_specs"]}->
+	    ok;
+	{error,Reason}->
+	    ?LOG_WARNING("Failed to update ",[Reason]);
+	{ok,Info} ->
+	    ?LOG_NOTICE("Repo dir actions",[Info,?SpecsDir]),
+	    ok
+    end,
     {noreply, State};
 
 
@@ -456,3 +434,8 @@ format_status(_Opt, Status) ->
 %%%===================================================================
 %%% Internal functions
 %%%===================================================================
+
+repo_check_timeout_loop(Parent)->
+    timer:sleep(?CheckRepoInterval),
+    Parent!{timeout,check_repo_update},
+    repo_check_timeout_loop(Parent).
